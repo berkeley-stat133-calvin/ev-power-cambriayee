@@ -9,7 +9,6 @@ format: typst
 
 ```{r}
 library(tidyverse)
-install.packages("maps")
 library(maps)
 ```
 
