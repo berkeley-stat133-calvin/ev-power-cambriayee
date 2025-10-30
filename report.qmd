@@ -8,27 +8,102 @@ format: typst
 ## **Part 0: libraries**
 
 ```{r}
-
+library(tidyverse)
+install.packages("maps")
+library(maps)
 ```
 
 ## **Part 1:** **Defining Research Question**
 
-Chosen Question:
+Chosen Question: In 2023, which states have the highest share of renewable energy, and what does it say about how clean EV charging might be?
+
+Overview: Electric vehicles don't produce tailpipe emissions, however, that doesn't mean that they're entirely clean. Whether they're actually environmentally beneficially depends on where the electricity used to charge them comes from, and EV charging can still contribute to emission in states that rely on fossil fuels like coal or natural gas. In this project, I used the renewable energy use, total energy use, and EV registrations by state datasets. I used these to calculate the percentage of each state's electricity that comes from renewable sources versus the percentages with EV adoption in order to see whether states with cleaner energy also tend to have more EVs. 
 
 ## **Part 2: Data Preparation and Cleaning**
 
 ```{r}
+ev_raw <- read_csv("data/ev-registrations-by-state-2023.csv")
+renew_raw <- read_csv("data/renew-use-2023.csv")
+total_raw <- read_csv("data/total-use-2023.csv")
+
+ev_clean <- ev_raw |>
+    rename(State = 1, EV = 2) |>
+    filter(!is.na(State), State != "STATE") |>
+    mutate(EV = str_remove_all(EV, "[#,~]"),
+        EV = str_remove_all(EV, ","),
+        EV = str_remove(EV, " EVs| EV"),
+        EV = str_trim(EV),
+        EV_Count = as.numeric(EV)) |>
+    select(State, EV_Count)
+
+state_lookup <- tibble(State_abbrev=state.abb, State=state.name)
+
+renew23 <- renew_raw |>
+    rename(State_abbrev = 1, Energy_Source = 2, Renewable = 3) |>
+    filter(State_abbrev %in% state.abb) |>
+    mutate(
+        Renewable = str_remove(Renewable, " kWh"),
+        Renewable = str_remove_all(Renewable, ","),
+        Renewable_kWh = as.numeric(Renewable)
+  ) |>
+    group_by(State_abbrev) |>
+    summarise(Renewable_Total_kWh = sum(Renewable_kWh, na.rm=TRUE), .groups = "drop") |>
+    left_join(tibble(State_abbrev = state.abb, State = state.name), by ="State_abbrev") |>
+    select(State, Renewable_Total_kWh)
+
+total23 <- total_raw |>
+    pivot_longer(cols = -Energy_Source, names_to = "State_abbrev", values_to = "Total") |>
+    filter(State_abbrev %in% state.abb) |>
+    mutate(
+    Total = str_remove(Total, " kWh"),
+    Total = str_remove_all(Total, ","),
+    Total_kWh = as.numeric(Total)) |>
+    group_by(State_abbrev) |>
+    summarise(Total_Energy_kWh = sum(Total_kWh, na.rm = TRUE), .groups = "drop") |>
+    left_join(tibble(State_abbrev = state.abb, State = state.name), by = "State_abbrev") |>
+    select(State, Total_Energy_kWh)
+
 
 ```
 
 ## **Part 3: Joining / Pivoting Datasets for Analysis**
 
 ```{r}
+energy23 <- renew23 |>
+    left_join(total23, by = "State") |>
+    mutate(Pct_Renewable_2023 = 100 * Renewable_Total_kWh/Total_Energy_kWh) |>
+    left_join(ev_clean, by ="State")
 
+energy23 |>
+    select(State, Pct_Renewable_2023, EV_Count) |>
+    arrange(desc(Pct_Renewable_2023)) 
+
+head(energy23)
+summary(energy23$Pct_Renewable_2023)
 ```
 
 ## **Part 4: Mapping Visualization**
 
 ```{r}
+us_map <- map_data("state")
+
+map_df <- energy23 |>
+    mutate(state_lower = tolower(State)) |>
+    left_join(us_map, by = c("state_lower" = "region"))
+
+ggplot(map_df, aes(long, lat, group = group, fill = Pct_Renewable_2023))+
+    geom_polygon(color = "white") +
+    coord_fixed(1.3) +
+    theme_minimal() +
+    scale_fill_viridis_c() +
+    labs(title = "% Renewable Energy by State (in 2023)", fill="% Renewable")
 
 ```
+
+## Analysis
+
+From this project, I found out that renewable energy varied greatly across the U.S. in 2023. The states that had the highest share of renewable electricity were South Dakota, Iowa, and Maine. This might be explained by the greater access to hydro and wind resources, which they can use to generate electricity. The states that had the lowest share of renewable electricity were Alaska, Louisiana, and Delaware.
+
+What was interesting about my findings was that states with a higher percentage of renewable energy didn't necessarily always have the highest number of EVs. One example is South Dakota, which has the highest percentage of renewable energy but only has around 1,600 EVs. On the other hand, California only has 16.6% of electricity from renewables, but has over 1.2 million EVS. 
+
+Overall, EV charging is cleaner in states where renewable energy takes up a large share, however, renewable energy share doesn't determine EV adoption in states. 
